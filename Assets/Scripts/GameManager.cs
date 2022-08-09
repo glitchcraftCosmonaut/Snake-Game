@@ -1,6 +1,8 @@
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.Events;
+using UnityEngine.UI;
 
 namespace WildSkies
 {
@@ -20,6 +22,7 @@ namespace WildSkies
         GameObject appleObj;
         GameObject tailObj;
         Node playerNode;
+        Node previousPlayerNode;
         Node appleNode;
         Sprite playerSprite;
 
@@ -32,23 +35,67 @@ namespace WildSkies
 
         bool up,left,right,down;
 
+        int currentScore;
+        int highScore;
+
+        bool isGameOver;
+        bool isFirstInput;
+
         public float moveRate = 0.5f;
         float timer;
 
+        Direction targetDirection;
         Direction curDirection;
+
+        public Text currentScoreText;
+        public Text highScoreText;
+
         public enum Direction
         {
             up,left,right,down
         }
 
+        public UnityEvent onStart;
+        public UnityEvent onGameOver;
+        public UnityEvent firstInput;
+        public UnityEvent onScore;
+
         #region INIT
         void Start()
         {
+            onStart.Invoke();
+        }
+
+        public void StartNewGame()
+        {
+            ClearReferences();
             CreateMap();
             PlacePlayer();
             PlaceCamera();
             CreateApple();
             curDirection = Direction.right;
+            isGameOver = false;
+            currentScore = 0;
+            UpdateScore();
+
+        }
+
+        public void ClearReferences()
+        {
+            if(mapObject != null)
+                Destroy(mapObject);
+            if(playerObj != null)
+                Destroy(playerObj);
+            if(appleObj != null)
+                Destroy(appleObj);
+            foreach(var t in tailNode)
+            {
+                if(t.obj != null)
+                    Destroy(t.obj);
+            }
+            tailNode.Clear();
+            availableNodes.Clear();
+            grid = null;
         }
 
         void CreateMap()
@@ -117,7 +164,8 @@ namespace WildSkies
             playerRender.sprite = playerSprite;
             playerRender.sortingOrder = 1;
             playerNode = GetNode(3, 3);
-            playerObj.transform.position = playerNode.worldPosition;
+            PlacePlayerObject(playerObj, playerNode.worldPosition);
+            playerObj.transform.localScale = Vector3.one *1.2f;
 
             tailObj = new GameObject("TailParent");
 
@@ -143,14 +191,37 @@ namespace WildSkies
         #region UPDATE
         private void Update()
         {
-            GetInput();
-            SetPlayerDirection();
-
-            timer += Time.deltaTime;
-            if(timer > moveRate)
+            if(isGameOver)
             {
-                timer = 0;
-                MovePlayer();
+                if(Input.GetKeyDown(KeyCode.R))
+                {
+                    onStart.Invoke();
+                }
+                return;
+            }
+                
+
+            GetInput();
+
+            if(isFirstInput)
+            {
+                SetPlayerDirection();
+
+                timer += Time.deltaTime;
+                if(timer > moveRate)
+                {
+                    timer = 0;
+                    curDirection = targetDirection;
+                    MovePlayer();
+                }
+            }
+            else
+            {
+                if(up || down || left || right)
+                {
+                    isFirstInput = true;
+                    firstInput.Invoke();
+                }
             }
         }
         void GetInput()
@@ -164,21 +235,30 @@ namespace WildSkies
         {
             if(up)
             {
-                curDirection = Direction.up;
+                SetDirection(Direction.up);
             }
             else if(down)
             {
-                curDirection = Direction.down;
+                SetDirection(Direction.down);
             }
             else if(left)
             {
-                curDirection = Direction.left;
+                SetDirection(Direction.left);
             }
             else if(right)
             {
-                curDirection = Direction.right;
+                SetDirection(Direction.right);
             }
         }
+
+        void SetDirection(Direction d)
+        {
+            if(!IsOpposite(d))
+            {
+                targetDirection = d;
+            }
+        }
+
         void MovePlayer()
         {
             int x = 0;
@@ -205,36 +285,54 @@ namespace WildSkies
             if(targetNode == null)
             {
                 //game over
+                onGameOver.Invoke();
             }
             else
             {
-                bool isScore = false;
-                if(targetNode == appleNode)
+                if(IsTailNode(targetNode))
                 {
-                    isScore = true;
+                    //game over
+                    onGameOver.Invoke();
                 }
-                Node previousNode = playerNode;
-                availableNodes.Add(previousNode);
-                playerObj.transform.position = targetNode.worldPosition;
-                playerNode = targetNode;
-                availableNodes.Remove(playerNode);
-                
-                if(isScore)
+                else 
                 {
-                    tailNode.Add(CreateTailNode(previousNode.x, previousNode.y));
-                    availableNodes.Remove(previousNode);
-                }
-                MoveTail();
-
-                if(isScore)
-                {
-                    if(availableNodes.Count > 0)
+                    bool isScore = false;
+                    if(targetNode == appleNode)
                     {
-                        RandomlyPlaceApple();
+                        isScore = true;
                     }
-                    else
+                    Node previousNode = playerNode;
+                    availableNodes.Add(previousNode);
+                    
+                    if(isScore)
                     {
-                        //you won
+                        tailNode.Add(CreateTailNode(previousNode.x, previousNode.y));
+                        availableNodes.Remove(previousNode);
+                    }
+                    MoveTail();
+                    PlacePlayerObject(playerObj, targetNode.worldPosition);
+                    playerNode = targetNode;
+                    availableNodes.Remove(playerNode);
+                    
+
+                    if(isScore)
+                    {
+                        currentScore++;
+                        if(currentScore >= highScore)
+                        {
+                            highScore = currentScore;
+                        }
+
+                        onScore.Invoke();
+                        
+                        if(availableNodes.Count > 0)
+                        {
+                            RandomlyPlaceApple();
+                        }
+                        else
+                        {
+                            //you won
+                        }
                     }
                 }
             }
@@ -259,18 +357,76 @@ namespace WildSkies
                     prevNode = prev;
                 }
                 availableNodes.Remove(previous.node);
-                previous.obj.transform.position = previous.node.worldPosition;
+                PlacePlayerObject(previous.obj, previous.node.worldPosition);
             }
         }
         #endregion
 
         #region UTILITIES
         
+        public void GameOver()
+        {
+            isGameOver = true;
+            isFirstInput = false;
+        }
+
+        public void UpdateScore()
+        {
+            currentScoreText.text = currentScore.ToString();
+            highScoreText.text = highScore.ToString();
+        }
+
+        bool IsOpposite(Direction direction)
+        {
+            switch(direction)
+            {
+                default:
+                case Direction.up:
+                    if(curDirection == Direction.down)
+                        return true;
+                    else
+                        return false;
+                case Direction.down:
+                if(curDirection == Direction.up)
+                        return true;
+                    else
+                        return false;
+                case Direction.left:
+                if(curDirection == Direction.right)
+                        return true;
+                    else
+                        return false;
+                case Direction.right:
+                if(curDirection == Direction.left)
+                        return true;
+                    else
+                        return false;
+            }
+        }
+
+        bool IsTailNode(Node n)
+        {
+            for(int i = 0; i < tailNode.Count; i++)
+            {
+                if(tailNode[i].node == n)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        void PlacePlayerObject(GameObject obj, Vector3 pos)
+        {
+            pos += Vector3.one * .5f;
+            obj.transform.position = pos;
+        }
+
         void RandomlyPlaceApple()
         {
             int ran = Random.Range(0, availableNodes.Count);
             Node n = availableNodes[ran];
-            appleObj.transform.position = n.worldPosition;
+            PlacePlayerObject(appleObj, n.worldPosition);
             appleNode = n;
         }
         
@@ -286,7 +442,8 @@ namespace WildSkies
             special.node = GetNode(x, y);
             special.obj = new GameObject();
             special.obj.transform.parent = tailObj.transform;
-            special.obj.transform.position = special.node.worldPosition;
+            PlacePlayerObject(special.obj, special.node.worldPosition);
+            special.obj.transform.localScale = Vector3.one *.95f;
             SpriteRenderer renderer = special.obj.AddComponent<SpriteRenderer>();
             renderer.sprite = playerSprite;
             renderer.sortingOrder = 1;
@@ -301,7 +458,7 @@ namespace WildSkies
             texture2D.Apply();
             texture2D.filterMode = FilterMode.Point;
             Rect rect = new Rect(0, 0, 1, 1);
-            return Sprite.Create(texture2D, rect, Vector2.zero, 1, 0, SpriteMeshType.FullRect);
+            return Sprite.Create(texture2D, rect, Vector2.one * .5f, 1, 0, SpriteMeshType.FullRect);
 
         }
         #endregion
