@@ -88,6 +88,8 @@ namespace WildSkies
                 Destroy(playerObj);
             if(appleObj != null)
                 Destroy(appleObj);
+            if(tailObj != null)
+                Destroy(tailObj);
             foreach(var t in tailNode)
             {
                 if(t.obj != null)
